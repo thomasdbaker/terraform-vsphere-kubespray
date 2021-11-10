@@ -1,12 +1,25 @@
 # terraform-vsphere-kubespray
 
+* Credit goes to sguyennet whom was the orginal author
+* This is my first project with terraform and ansible so there is likely bugs
+
+## Whats New/Fixed
+
+* All fixes tested with esxi 6.7, Ubuntu 20.04, Kubespray 2.17.1 and Terraform v1.0.10
+* Fixed resources on destroy to include triggers works with latest version of Kubespray
+* Corrected File structure with work wil latest version of kubespray
+* Added addons templates
+* Added option to create etcd at host level
+* Added option to change container runtime 
+
+
 ## Requirements
 
 * Git
-* Ansible v2.6 or v2.7
+* Ansible >= v2.6 or v2.7
 * Jinja >= 2.9.6
 * Python netaddr
-* Terraform v0.12
+* Terraform v1.0.10
 * Internet connection on the client machine to download Kubespray.
 * Internet connection on the Kubernetes nodes to download the Kubernetes binaries.
 * vSphere environment with a vCenter. An enterprise plus license is needed if you would like to configure anti-affinity between the Kubernetes master nodes.
@@ -14,7 +27,7 @@
 
 ## Tested Linux distribution
 
-* Ubuntu LTS 16.04 (requirements: open-vm-tools package)
+* Ubuntu LTS 20.04 (requirements: open-vm-tools package)
 * Ubuntu LTS 18.04 (requirements: VMware tools)
 * CentOS 7 (requirements: open-vm-tools package, perl package)
 * Debian 9 (requirements: VMware tools, vSphere VM OS configuration set to "Ubuntu Linux (64-bit)", net-tools package)
@@ -22,13 +35,13 @@
 
 ## Tested Kubernetes network plugins
 
-|         |        RHEL 7      |       CentOS 7     |  Ubuntu LTS 18.04  |  Ubuntu LTS 16.04  |       Debian 9     |
+|         |        RHEL 7      |       CentOS 7     |  Ubuntu LTS 18.04  |  Ubuntu LTS 20.04  |       Debian 9     |
 |---------|:------------------:|:------------------:|:------------------:|:------------------:|:------------------:|
-| Flannel | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
-| Weave   | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+| Flannel | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |        :x:         | :heavy_check_mark: |
+| Weave   | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |        :x:         | :heavy_check_mark: |
 | Calico  | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
 | Cilium  |        :x:         |        :x:         | :heavy_check_mark: |        :x:         | :heavy_check_mark: |
-| Canal   | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |
+| Canal   | :heavy_check_mark: | :heavy_check_mark: | :heavy_check_mark: |        :x:         | :heavy_check_mark: |
 
 ## Usage
 
@@ -75,13 +88,8 @@ $ vim terraform.tfvars
 
 | Kubernetes version | Kubespray version |
 |:------------------:|:-----------------:|
-|      v1.15.3       |      v2.11.0      |
-|      v1.14.3       |      v2.10.3      |
-|      v1.14.1       |      v2.10.0      |
-|      v1.13.5       |      v2.9.0       |
-|      v1.12.5       |      v2.8.2       |
-|      v1.12.4       |      v2.8.1       |
-|      v1.12.3       |      v2.8.0       |
+|      v1.21.1       |      v2.17.1      |
+
 
 Execute the terraform script to upgrade Kubernetes:
 

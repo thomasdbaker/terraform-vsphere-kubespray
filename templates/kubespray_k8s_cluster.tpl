@@ -95,7 +95,7 @@ kube_apiserver_insecure_port: 0 # (disabled)
 
 # Kube-proxy proxyMode configuration.
 # Can be ipvs, iptables
-kube_proxy_mode: ipvs
+kube_proxy_mode: iptables
 
 # A string slice of values which specify the addresses to use for NodePorts.
 # Values may be valid IP blocks (e.g. 1.2.3.0/24, 1.2.3.4/32).
@@ -132,11 +132,11 @@ dnsmasq_dns_server: "{{ kube_service_addresses|ipaddr('net')|ipaddr(2)|ipaddr('a
 dns_domain: "{{ cluster_name }}"
 
 ## Container runtime
-## docker for docker and crio for cri-o.
-container_manager: docker
+## docker for docker containerd for containerd and crio for cri-o.
+container_manager: ${k8s_container_manager}
 
 ## Settings for containerized control plane (etcd/kubelet/secrets)
-etcd_deployment_type: docker
+etcd_deployment_type: ${kubespray_etcd_deployment_type}
 kubelet_deployment_type: host
 helm_deployment_type: host
 

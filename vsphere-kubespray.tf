@@ -3,7 +3,7 @@
 #===============================================================================
 
 provider "vsphere" {
-  version              = "1.11.0"
+  #version              = ">=2.0.2"
   vsphere_server       = "${var.vsphere_vcenter}"
   user                 = "${var.vsphere_user}"
   password             = "${var.vsphere_password}"
@@ -11,7 +11,7 @@ provider "vsphere" {
 }
 
 #===============================================================================
-# vSphere Data
+# vSphere 
 #===============================================================================
 
 data "vsphere_datacenter" "dc" {
@@ -42,6 +42,30 @@ data "vsphere_virtual_machine" "template" {
 # Template files
 #===============================================================================
 
+# Kubespray containerd.yml template #
+data "template_file" "kubespray_k8s-net-calico" {
+  template = "${file("templates/kubespray_k8s-net-calico.tpl")}"
+  vars ={
+    
+  }
+}
+
+# Kubespray containerd.yml template #
+data "template_file" "kubespray_containerd" {
+  template = "${file("templates/kubespray_containerd.tpl")}"
+  vars ={
+    
+  }
+}
+
+# Kubespray etcd.yml template #
+data "template_file" "kubespray_etcd" {
+  template = "${file("templates/kubespray_etcd.tpl")}"
+  vars ={
+    kubespray_etcd_deployment_type = "${var.kubespray_etcd_deployment_type}"
+  }
+}
+
 # Kubespray all.yml template #
 data "template_file" "kubespray_all" {
   template = "${file("templates/kubespray_all.tpl")}"
@@ -63,10 +87,81 @@ data "template_file" "kubespray_k8s_cluster" {
   template = "${file("templates/kubespray_k8s_cluster.tpl")}"
 
   vars = {
-    kube_version        = "${var.k8s_version}"
-    kube_network_plugin = "${var.k8s_network_plugin}"
-    weave_password      = "${var.k8s_weave_encryption_password}"
-    k8s_dns_mode        = "${var.k8s_dns_mode}"
+    kube_version          = "${var.k8s_version}"
+    kube_network_plugin   = "${var.k8s_network_plugin}"
+    weave_password        = "${var.k8s_weave_encryption_password}"
+    k8s_dns_mode          = "${var.k8s_dns_mode}"
+    kubespray_etcd_deployment_type = "${var.kubespray_etcd_deployment_type}"
+    k8s_container_manager = "${var.k8s_container_manager}"
+   # If MetalLB is enable than strict ARP is set to true in k8s-cluster.yml
+    kube_proxy_strict_arp = (
+      yamldecode(
+        var.kubespray_custom_addons_enabled
+        ? data.template_file.kubespray_custom_addons[0].rendered
+        : data.template_file.kubespray_addons[0].rendered
+      )["metallb_enabled"]
+    )
+  }
+
+  # Correct addons template file has to be created before
+  # 'metallb_enabled' value can be read from it
+  depends_on = [
+    data.template_file.kubespray_addons,
+    data.template_file.kubespray_custom_addons
+  ]
+}
+
+# Kubespray addons.yml template #
+data "template_file" "kubespray_addons" {
+
+  count = !var.kubespray_custom_addons_enabled ? 1 : 0
+
+  template = file("templates/kubespray_addons.tpl")
+
+  vars = {
+    dashboard_enabled                     = var.k8s_dashboard_enabled
+    helm_enabled                          = var.helm_enabled
+    local_path_provisioner_enabled        = var.local_path_provisioner_enabled
+    local_path_provisioner_version        = var.local_path_provisioner_version
+    local_path_provisioner_namespace      = var.local_path_provisioner_namespace
+    local_path_provisioner_storage_class  = var.local_path_provisioner_storage_class
+    local_path_provisioner_reclaim_policy = var.local_path_provisioner_reclaim_policy
+    local_path_provisioner_claim_root     = var.local_path_provisioner_claim_root
+    metallb_enabled                       = var.metallb_enabled
+    metallb_version                       = var.metallb_version
+    metallb_port                          = var.metallb_port
+    metallb_cpu_limit                     = var.metallb_cpu_limit
+    metallb_mem_limit                     = var.metallb_mem_limit
+    metallb_protocol                      = var.metallb_protocol
+    metallb_ip_range                      = var.metallb_ip_range
+    metallb_peers = (
+      var.metallb_protocol == "bgp"
+      ? "metallb_peers:\n${join("", data.template_file.metallb_peers.*.rendered)}"
+      : ""
+    )
+  }
+}
+
+# Kubespray custom addons.yml #
+data "template_file" "kubespray_custom_addons" {
+
+  count = var.kubespray_custom_addons_enabled ? 1 : 0
+
+  template = file(var.kubespray_custom_addons_path)
+}
+
+# Kubespray MetalLB peers (BGP mode only) #
+data "template_file" "metallb_peers" {
+
+  # Create MetalLB peers only in BGP mode #
+  count = var.metallb_protocol == "bgp" ? length(var.metallb_peers) : 0
+
+  template = file("templates/kubespray_addons_metallb_peer.tpl")
+
+  vars = {
+    peer_ip  = var.metallb_peers[count.index].peer_ip
+    peer_asn = var.metallb_peers[count.index].peer_asn
+    my_asn   = var.metallb_peers[count.index].my_asn
   }
 }
 
@@ -176,22 +271,54 @@ data "template_file" "keepalived_slave" {
 # Local Files
 #===============================================================================
 
+# Create Kubespray containerd.yml configuration file from Terraform template #
+resource "local_file" "kubespray_k8s-net-calico" {
+  content  = "${data.template_file.kubespray_k8s-net-calico.rendered}"
+  filename = "config/group_vars/k8s_cluster/k8s-net-calico.yml"
+}
+
+# Create Kubespray containerd.yml configuration file from Terraform template #
+resource "local_file" "kubespray_containerd" {
+  content  = "${data.template_file.kubespray_containerd.rendered}"
+  filename = "config/group_vars/all/containerd.yml"
+}
+
+# Create Kubespray etcd.yml configuration file from Terraform template #
+resource "local_file" "kubespray_etcd" {
+  content  = "${data.template_file.kubespray_etcd.rendered}"
+  filename = "config/group_vars/etcd.yml"
+}
+
 # Create Kubespray all.yml configuration file from Terraform template #
 resource "local_file" "kubespray_all" {
   content  = "${data.template_file.kubespray_all.rendered}"
-  filename = "config/group_vars/all.yml"
+  filename = "config/group_vars/all/all.yml"
 }
 
 # Create Kubespray k8s-cluster.yml configuration file from Terraform template #
 resource "local_file" "kubespray_k8s_cluster" {
   content  = "${data.template_file.kubespray_k8s_cluster.rendered}"
-  filename = "config/group_vars/k8s-cluster.yml"
+  filename = "config/group_vars/k8s_cluster/k8s-cluster.yml"
+}
+
+# Create Kubespray addons.yml configuration file from template #
+resource "local_file" "kubespray_addons" {
+  count = !var.kubespray_custom_addons_enabled ? 1 : 0
+  content  = "${data.template_file.kubespray_addons[0].rendered}"
+  filename = "config/group_vars/k8s_cluster/addons.yml"
+}
+
+# Create a copy of custom Kubespray addons.yml configuration #
+resource "local_file" "kubespray_custom_addons" {
+  count = var.kubespray_custom_addons_enabled ? 1 : 0
+  content  = "${data.template_file.kubespray_custom_addons[0].rendered}"
+  filename = "config/group_vars/k8s_cluster/addons.yml"
 }
 
 # Create Kubespray hosts.ini configuration file from Terraform templates #
 resource "local_file" "kubespray_hosts" {
   content  = "${join("", data.template_file.haproxy_hosts.*.rendered)}${join("", data.template_file.kubespray_hosts_master.*.rendered)}${join("", data.template_file.kubespray_hosts_worker.*.rendered)}\n[haproxy]\n${join("", data.template_file.haproxy_hosts_list.*.rendered)}\n[kube-master]\n${join("", data.template_file.kubespray_hosts_master_list.*.rendered)}\n[etcd]\n${join("", data.template_file.kubespray_hosts_master_list.*.rendered)}\n[kube-node]\n${join("", data.template_file.kubespray_hosts_worker_list.*.rendered)}\n[k8s-cluster:children]\nkube-master\nkube-node"
-  filename = "config/hosts.ini"
+  filename = "config/inventory.ini"
 }
 
 # Create HAProxy configuration from Terraform templates #
@@ -232,11 +359,18 @@ locals {
 
 # Modify the permission on the config directory
 resource "null_resource" "config_permission" {
-  provisioner "local-exec" {
+  provisioner local-exec {
     command = "chmod -R 700 config"
   }
 
-  depends_on = ["local_file.haproxy", "local_file.kubespray_hosts", "local_file.kubespray_k8s_cluster", "local_file.kubespray_all"]
+  depends_on = [
+    local_file.haproxy, 
+    local_file.kubespray_hosts,
+    local_file.kubespray_addons,
+    local_file.kubespray_k8s_cluster,
+    local_file.kubespray_all
+  ]
+
 }
 
 # Clone Kubespray repository #
@@ -252,7 +386,7 @@ resource "null_resource" "rhel_register" {
   count = "${var.vm_distro == "rhel" ? 1 : 0}"
 
   provisioner "local-exec" {
-    command = "cd ansible/rhel && ansible-playbook -i ../../config/hosts.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD rh_username=${var.rh_username} rh_password=$RH_PASSWORD rh_subscription_server=${var.rh_subscription_server} rh_unverified_ssl=${var.rh_unverified_ssl}\" ${lookup(local.extra_args, var.vm_distro)} -v register.yml"
+    command = "cd ansible/rhel && ansible-playbook -i ../../config/inventory.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD rh_username=${var.rh_username} rh_password=$RH_PASSWORD rh_subscription_server=${var.rh_subscription_server} rh_unverified_ssl=${var.rh_unverified_ssl}\" ${lookup(local.extra_args, var.vm_distro)} -v register.yml"
 
     environment = {
       VM_PASSWORD           = "${var.vm_password}"
@@ -261,7 +395,12 @@ resource "null_resource" "rhel_register" {
     }
   }
 
-  depends_on = ["local_file.kubespray_hosts", "vsphere_virtual_machine.haproxy", "vsphere_virtual_machine.worker", "vsphere_virtual_machine.master"]
+  depends_on = [
+    local_file.kubespray_hosts, 
+    vsphere_virtual_machine.haproxy, 
+    vsphere_virtual_machine.worker, 
+    vsphere_virtual_machine.master
+  ]
 }
 
 # Execute register and auto-subscribe RHEL Ansible playbook when a node is added#
@@ -269,7 +408,7 @@ resource "null_resource" "rhel_register_kubespray_add" {
   count = "${var.vm_distro == "rhel" && var.action == "add_worker" ? 1 : 0}"
 
   provisioner "local-exec" {
-    command = "cd ansible/rhel && ansible-playbook -i ../../config/hosts.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD rh_username=${var.rh_username} rh_password=$RH_PASSWORD rh_subscription_server=${var.rh_subscription_server} rh_unverified_ssl=${var.rh_unverified_ssl}\" ${lookup(local.extra_args, var.vm_distro)} -v register.yml"
+    command = "cd ansible/rhel && ansible-playbook -i ../../config/inventory.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD rh_username=${var.rh_username} rh_password=$RH_PASSWORD rh_subscription_server=${var.rh_subscription_server} rh_unverified_ssl=${var.rh_unverified_ssl}\" ${lookup(local.extra_args, var.vm_distro)} -v register.yml"
 
     environment = {
       VM_PASSWORD           = "${var.vm_password}"
@@ -278,7 +417,10 @@ resource "null_resource" "rhel_register_kubespray_add" {
     }
   }
 
-  depends_on = ["local_file.kubespray_hosts", "vsphere_virtual_machine.worker"]
+  depends_on = [
+    local_file.kubespray_hosts, 
+    vsphere_virtual_machine.worker
+  ]
 }
 
 # Execute firewalld RHEL Ansible playbook #
@@ -286,7 +428,7 @@ resource "null_resource" "rhel_firewalld" {
   count = "${var.vm_distro == "rhel" || var.vm_distro == "centos" ? 1 : 0}"
 
   provisioner "local-exec" {
-    command = "cd ansible/rhel && ansible-playbook -i ../../config/hosts.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD\" ${lookup(local.extra_args, var.vm_distro)} -v firewalld.yml"
+    command = "cd ansible/rhel && ansible-playbook -i ../../config/inventory.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD\" ${lookup(local.extra_args, var.vm_distro)} -v firewalld.yml"
 
     environment = {
       VM_PASSWORD           = "${var.vm_password}"
@@ -294,7 +436,12 @@ resource "null_resource" "rhel_firewalld" {
     }
   }
 
-  depends_on = ["local_file.kubespray_hosts", "vsphere_virtual_machine.haproxy", "vsphere_virtual_machine.worker", "vsphere_virtual_machine.master"]
+  depends_on = [
+    local_file.kubespray_hosts, 
+    vsphere_virtual_machine.haproxy, 
+    vsphere_virtual_machine.worker, 
+    vsphere_virtual_machine.master
+  ]
 }
 
 # Execute firewall RHEL Ansible playbook when a node is added#
@@ -302,7 +449,7 @@ resource "null_resource" "rhel_firewalld_kubespray_add" {
   count = "${var.vm_distro == "rhel" || var.vm_distro == "centos" && var.action == "add_worker" ? 1 : 0}"
 
   provisioner "local-exec" {
-    command = "cd ansible/rhel && ansible-playbook -i ../../config/hosts.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD\" ${lookup(local.extra_args, var.vm_distro)} -v firewalld.yml"
+    command = "cd ansible/rhel && ansible-playbook -i ../../config/inventory.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD\" ${lookup(local.extra_args, var.vm_distro)} -v firewalld.yml"
 
     environment = {
       VM_PASSWORD           = "${var.vm_password}"
@@ -310,7 +457,10 @@ resource "null_resource" "rhel_firewalld_kubespray_add" {
     }
   }
 
-  depends_on = ["local_file.kubespray_hosts", "vsphere_virtual_machine.worker"]
+  depends_on = [
+    local_file.kubespray_hosts, 
+    vsphere_virtual_machine.worker
+  ]
 }
 
 # Execute HAProxy Ansible playbook #
@@ -318,7 +468,7 @@ resource "null_resource" "haproxy_install" {
   count = "${var.action == "create" ? 1 : 0}"
 
   provisioner "local-exec" {
-    command = "cd ansible/haproxy && ansible-playbook -i ../../config/hosts.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD\" ${lookup(local.extra_args, var.vm_distro)} -v haproxy.yml"
+    command = "cd ansible/haproxy && ansible-playbook -i ../../config/inventory.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD\" ${lookup(local.extra_args, var.vm_distro)} -v haproxy.yml"
 
     environment = {
       VM_PASSWORD           = "${var.vm_password}"
@@ -326,7 +476,13 @@ resource "null_resource" "haproxy_install" {
     }
   }
 
-  depends_on = ["local_file.kubespray_hosts", "local_file.haproxy", "null_resource.rhel_register", "null_resource.rhel_firewalld", "vsphere_virtual_machine.haproxy"]
+  depends_on = [
+    local_file.kubespray_hosts, 
+    local_file.haproxy, 
+    null_resource.rhel_register, 
+    null_resource.rhel_firewalld, 
+    vsphere_virtual_machine.haproxy
+  ]
 }
 
 # Execute create Kubespray Ansible playbook #
@@ -334,7 +490,7 @@ resource "null_resource" "kubespray_create" {
   count = "${var.action == "create" ? 1 : 0}"
 
   provisioner "local-exec" {
-    command = "cd ansible/kubespray && ansible-playbook -i ../../config/hosts.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD kube_version=${var.k8s_version}\" ${lookup(local.extra_args, var.vm_distro)} -v cluster.yml"
+    command = "cd ansible/kubespray && ansible-playbook -i ../../config/inventory.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD kube_version=${var.k8s_version}\" ${lookup(local.extra_args, var.vm_distro)} -v cluster.yml"
 
     environment = {
       VM_PASSWORD           = "${var.vm_password}"
@@ -342,7 +498,15 @@ resource "null_resource" "kubespray_create" {
     }
   }
 
-  depends_on = ["local_file.kubespray_hosts", "null_resource.kubespray_download", "local_file.kubespray_all", "local_file.kubespray_k8s_cluster", "null_resource.haproxy_install", "vsphere_virtual_machine.haproxy", "vsphere_virtual_machine.worker", "vsphere_virtual_machine.master"]
+  depends_on = [
+    local_file.kubespray_hosts, 
+    null_resource.kubespray_download, 
+    local_file.kubespray_all, 
+    local_file.kubespray_k8s_cluster, 
+    null_resource.haproxy_install, 
+    vsphere_virtual_machine.haproxy, 
+    vsphere_virtual_machine.worker, 
+    vsphere_virtual_machine.master]
 }
 
 # Execute scale Kubespray Ansible playbook #
@@ -350,7 +514,7 @@ resource "null_resource" "kubespray_add" {
   count = "${var.action == "add_worker" ? 1 : 0}"
 
   provisioner "local-exec" {
-    command = "cd ansible/kubespray && ansible-playbook -i ../../config/hosts.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD kube_version=${var.k8s_version}\" ${lookup(local.extra_args, var.vm_distro)} -v scale.yml"
+    command = "cd ansible/kubespray && ansible-playbook -i ../../config/inventory.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD kube_version=${var.k8s_version}\" ${lookup(local.extra_args, var.vm_distro)} -v scale.yml"
 
     environment = {
       VM_PASSWORD           = "${var.vm_password}"
@@ -358,7 +522,17 @@ resource "null_resource" "kubespray_add" {
     }
   }
 
-  depends_on = ["local_file.kubespray_hosts", "null_resource.kubespray_download", "local_file.kubespray_all", "local_file.kubespray_k8s_cluster", "null_resource.haproxy_install", "vsphere_virtual_machine.haproxy", "vsphere_virtual_machine.worker", "vsphere_virtual_machine.master"]
+  depends_on = [
+    local_file.kubespray_hosts, 
+    null_resource.kubespray_download, 
+    local_file.kubespray_all, 
+    local_file.kubespray_addons, 
+    local_file.kubespray_k8s_cluster, 
+    null_resource.haproxy_install, 
+    vsphere_virtual_machine.haproxy, 
+    vsphere_virtual_machine.worker, 
+    vsphere_virtual_machine.master
+  ]
 }
 
 # Execute upgrade Kubespray Ansible playbook #
@@ -374,7 +548,7 @@ resource "null_resource" "kubespray_upgrade" {
   }
 
   provisioner "local-exec" {
-    command = "cd ansible/kubespray && ansible-playbook -i ../../config/hosts.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD kube_version=${var.k8s_version}\" ${lookup(local.extra_args, var.vm_distro)} -v upgrade-cluster.yml"
+    command = "cd ansible/kubespray && ansible-playbook -i ../../config/inventory.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD kube_version=${var.k8s_version}\" ${lookup(local.extra_args, var.vm_distro)} -v upgrade-cluster.yml"
 
     environment = {
       VM_PASSWORD           = "${var.vm_password}"
@@ -382,7 +556,66 @@ resource "null_resource" "kubespray_upgrade" {
     }
   }
 
-  depends_on = ["local_file.kubespray_hosts", "null_resource.kubespray_download", "local_file.kubespray_all", "local_file.kubespray_k8s_cluster", "null_resource.haproxy_install", "vsphere_virtual_machine.haproxy", "vsphere_virtual_machine.worker", "vsphere_virtual_machine.master"]
+  depends_on = [
+    local_file.kubespray_hosts, 
+    null_resource.kubespray_download,  
+    local_file.kubespray_all, 
+    local_file.kubespray_k8s_cluster, 
+    null_resource.haproxy_install, 
+    vsphere_virtual_machine.haproxy,
+    vsphere_virtual_machine.worker, 
+    vsphere_virtual_machine.master
+  ]
+}
+
+# Takes care of removing worker from cluster's configuration #
+resource "null_resource" "kubespray_remove" {
+
+  #for_each = { for node in var.worker_nodes : node.name => node }
+
+  triggers = {
+    #vm_name            = each.value.name
+    #vm_user            = var.vm_user
+    #vm_ssh_private_key = var.vm_ssh_private_key
+    #extra_args         = lookup(local.extra_args, var.vm_distro, local.default_extra_args)
+    vm_password           =  "$(var.vm_password)"
+    vm_privilege_password =  "$(var.vm_privilege_password)"
+    vm_name               =  "$(var.vm_name)"
+    vm_user               =  "$(var.vm_user)"
+   
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "cd ansible/kubespray && ansible-playbook -i ../../config/hosts.ini -b -u $SSH_USER -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD node=$VM_NAME delete_nodes_confirmation=yes\" -v remove-node.yml"
+
+    environment = {
+      VM_NAME               = self.triggers.vm_name
+      SSH_USER              = self.triggers.vm_user
+      VM_PASSWORD           = self.triggers.vm_password
+      VM_PRIVILEGE_PASSWORD = self.triggers.vm_privilege_password
+    }
+    on_failure = continue
+  }
+}
+
+
+resource "null_resource" "kubespray_remove_inv" {
+
+  triggers = {
+    vmprefix              =  "$(var.vmprefix)"
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = "sed 's/$VM_PREFIX-worker-[0-9]*$//' config/inventory.ini"
+
+    environment = {
+      VM_PREFIX            = "${self.triggers.vmprefix}"
+      
+    }
+    on_failure = continue
+  }
 }
 
 # Create the local admin.conf kubectl configuration file #
@@ -404,7 +637,7 @@ resource "null_resource" "kubectl_configuration" {
     command = "chmod 600 config/admin.conf"
   }
 
-  depends_on = ["null_resource.kubespray_create"]
+  depends_on = [null_resource.kubespray_create]
 }
 
 #===============================================================================
@@ -471,7 +704,7 @@ resource "vsphere_virtual_machine" "master" {
     }
   }
 
-  depends_on = ["vsphere_virtual_machine.haproxy"]
+  depends_on = [vsphere_virtual_machine.haproxy]
 }
 
 # Create anti affinity rule for the Kubernetes master VMs #
@@ -481,7 +714,7 @@ resource "vsphere_compute_cluster_vm_anti_affinity_rule" "master_anti_affinity_r
   compute_cluster_id  = "${data.vsphere_compute_cluster.cluster.id}"
   virtual_machine_ids = ["${vsphere_virtual_machine.master.*.id}"]
 
-  depends_on = ["vsphere_virtual_machine.master"]
+  depends_on = [vsphere_virtual_machine.master]
 }
 
 # Create the Kubernetes worker VMs #
@@ -531,25 +764,12 @@ resource "vsphere_virtual_machine" "worker" {
     }
   }
 
-  provisioner "local-exec" {
-    when    = "destroy"
-    command = "cd ansible/kubespray && ansible-playbook -i ../../config/hosts.ini -b -u ${var.vm_user} -e \"ansible_ssh_pass=$VM_PASSWORD ansible_become_pass=$VM_PRIVILEGE_PASSWORD node=$VM_NAME delete_nodes_confirmation=yes\" -v remove-node.yml"
-
-    environment = {
-      VM_PASSWORD           = "${var.vm_password}"
-      VM_PRIVILEGE_PASSWORD = "${var.vm_privilege_password}"
-      VM_NAME               = "${var.vm_name_prefix}-worker-${count.index}"
-    }
-
-    on_failure = "continue"
-  }
-
-  provisioner "local-exec" {
-    when    = "destroy"
-    command = "sed 's/${var.vm_name_prefix}-worker-[0-9]*$//' config/hosts.ini"
-  }
-
-  depends_on = ["vsphere_virtual_machine.master", "local_file.kubespray_hosts", "local_file.kubespray_k8s_cluster", "local_file.kubespray_all"]
+  depends_on = [
+    vsphere_virtual_machine.master, 
+    local_file.kubespray_hosts, 
+    local_file.kubespray_k8s_cluster, 
+    local_file.kubespray_all
+  ]
 }
 
 # Create the HAProxy load balancer VM #
