@@ -88,7 +88,7 @@ $ vim terraform.tfvars
 
 | Kubernetes version | Kubespray version |
 |:------------------:|:-----------------:|
-|      v1.21.1       |      v2.17.1      |
+|      v1.21.6       |      v2.17.1      |
 
 
 Execute the terraform script to upgrade Kubernetes:
